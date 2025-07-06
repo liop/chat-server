@@ -22,6 +22,7 @@ mod models;
 mod routes;
 mod state;
 mod sync;
+mod callback;
 
 use config::Config;
 use state::AppState;
@@ -90,6 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/ws/rooms/:room_id", get(routes::ws_handler))
         .route("/management/sync", get(routes::get_sync_data).post(routes::trigger_sync))
+        // 新增的拆分接口
+        .route("/management/sync/rooms", get(routes::get_rooms_basic_info))
+        .route("/management/sync/chat-history/:room_id", get(routes::get_chat_history))
+        .route("/management/sync/session-history/:room_id", get(routes::get_session_history))
         .with_state(app_state)
         .layer(cors);
 

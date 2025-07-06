@@ -1,258 +1,329 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-测试房间信息同步回调系统
-演示如何启动回调服务器并测试数据同步
+房间信息同步回调系统测试脚本
+测试拆分后的回调接口和传统接口
 """
 
 import requests
 import json
 import time
-import subprocess
-import sys
-import os
+import uuid
 from datetime import datetime
 
-# 回调服务器配置
-CALLBACK_SERVER_URL = "http://localhost:8080"
+# 配置
 RUST_SERVER_URL = "http://localhost:3000"
+CALLBACK_SERVER_URL = "http://localhost:8080"
+API_KEY = "your_secret_api_key_here"  # 请替换为实际的API密钥
 
-def test_callback_server():
-    """测试回调服务器功能"""
-    print("=== 测试回调服务器 ===")
-    
-    # 1. 健康检查
-    try:
-        response = requests.get(f"{CALLBACK_SERVER_URL}/health")
-        if response.status_code == 200:
-            print("✅ 回调服务器健康检查通过")
-        else:
-            print("❌ 回调服务器健康检查失败")
-            return False
-    except requests.exceptions.ConnectionError:
-        print("❌ 无法连接到回调服务器，请确保服务器已启动")
-        return False
-    
-    # 2. 模拟房间数据同步
-    mock_room_data = {
-        "room_id": "550e8400-e29b-41d4-a716-446655440000",
-        "admin_user_ids": ["admin1", "admin2"],
-        "start_time": int(time.time()) - 3600,  # 1小时前
-        "stats": {
-            "current_users": 5,
-            "peak_users": 15,
-            "total_joins": 25
-        },
-        "chat_history": [
-            {
-                "user_id": "user1",
-                "content": "大家好！",
-                "created_at": int(time.time()) - 1800
-            },
-            {
-                "user_id": "user2", 
-                "content": "你好！",
-                "created_at": int(time.time()) - 1700
-            },
-            {
-                "user_id": "admin1",
-                "content": "欢迎来到房间！",
-                "created_at": int(time.time()) - 1600
-            }
-        ],
-        "session_history": [
-            {
-                "user_id": "user1",
-                "join_time": int(time.time()) - 3600,
-                "leave_time": int(time.time()) - 1800,
-                "duration_seconds": 1800
-            },
-            {
-                "user_id": "user2",
-                "join_time": int(time.time()) - 3500,
-                "leave_time": int(time.time()) - 1700,
-                "duration_seconds": 1800
-            }
-        ]
-    }
-    
-    try:
-        response = requests.post(
-            f"{CALLBACK_SERVER_URL}/sync/room",
-            json=mock_room_data,
-            headers={"Content-Type": "application/json"}
-        )
-        
-        if response.status_code == 200:
-            print("✅ 房间数据同步测试成功")
-            result = response.json()
-            print(f"   响应: {result.get('message', '')}")
-        else:
-            print(f"❌ 房间数据同步测试失败: {response.status_code}")
-            print(f"   错误: {response.text}")
-            return False
-    except Exception as e:
-        print(f"❌ 房间数据同步测试异常: {str(e)}")
-        return False
-    
-    # 3. 验证数据是否正确保存
-    time.sleep(1)  # 等待数据库写入
-    
-    try:
-        response = requests.get(f"{CALLBACK_SERVER_URL}/rooms")
-        if response.status_code == 200:
-            rooms = response.json().get("rooms", [])
-            if rooms:
-                print("✅ 房间列表查询成功")
-                print(f"   找到 {len(rooms)} 个房间")
-                
-                # 获取第一个房间的详细信息
-                room_id = rooms[0]["room_id"]
-                detail_response = requests.get(f"{CALLBACK_SERVER_URL}/rooms/{room_id}")
-                if detail_response.status_code == 200:
-                    room_detail = detail_response.json()
-                    print("✅ 房间详情查询成功")
-                    print(f"   房间ID: {room_detail['room_id']}")
-                    print(f"   管理员: {room_detail['admin_user_ids']}")
-                    print(f"   聊天记录数: {len(room_detail['chat_history'])}")
-                    print(f"   会话记录数: {len(room_detail['session_history'])}")
-                else:
-                    print("❌ 房间详情查询失败")
-            else:
-                print("❌ 未找到同步的房间数据")
-                return False
-        else:
-            print("❌ 房间列表查询失败")
-            return False
-    except Exception as e:
-        print(f"❌ 数据验证异常: {str(e)}")
-        return False
-    
-    # 4. 获取统计信息
-    try:
-        response = requests.get(f"{CALLBACK_SERVER_URL}/stats")
-        if response.status_code == 200:
-            stats = response.json()
-            print("✅ 统计信息查询成功")
-            print(f"   总房间数: {stats['total_rooms']}")
-            print(f"   总消息数: {stats['total_messages']}")
-            print(f"   总会话数: {stats['total_sessions']}")
-        else:
-            print("❌ 统计信息查询失败")
-    except Exception as e:
-        print(f"❌ 统计信息查询异常: {str(e)}")
-    
-    return True
+headers = {
+    "Content-Type": "application/json",
+    "X-Api-Key": API_KEY
+}
 
-def test_rust_server_integration():
-    """测试与Rust服务器的集成"""
-    print("\n=== 测试Rust服务器集成 ===")
+def test_health_check():
+    """测试健康检查"""
+    print("=== 测试健康检查 ===")
     
-    # 检查Rust服务器是否运行
     try:
-        response = requests.get(f"{RUST_SERVER_URL}/health")
+        # 测试Rust服务器
+        response = requests.get(f"{RUST_SERVER_URL}/management/health")
         if response.status_code == 200:
             print("✅ Rust服务器运行正常")
         else:
-            print("❌ Rust服务器响应异常")
+            print(f"❌ Rust服务器异常: {response.status_code}")
             return False
-    except requests.exceptions.ConnectionError:
-        print("❌ 无法连接到Rust服务器，请确保服务器已启动")
+        
+        # 测试回调服务器
+        response = requests.get(f"{CALLBACK_SERVER_URL}/health")
+        if response.status_code == 200:
+            print("✅ 回调服务器运行正常")
+        else:
+            print(f"❌ 回调服务器异常: {response.status_code}")
+            return False
+            
+        return True
+        
+    except Exception as e:
+        print(f"❌ 健康检查失败: {e}")
         return False
+
+def test_create_room_with_events():
+    """测试创建房间并触发事件回调"""
+    print("\n=== 测试创建房间事件回调 ===")
     
-    # 创建房间
-    create_room_data = {
-        "room_name": "测试房间",
+    room_data = {
+        "room_name": f"测试房间_{uuid.uuid4().hex[:8]}",
         "admin_user_ids": ["admin1", "admin2"]
     }
     
     try:
         response = requests.post(
-            f"{RUST_SERVER_URL}/rooms",
-            json=create_room_data,
-            headers={
-                "Content-Type": "application/json",
-                "X-Api-Key": "your-secret-admin-key-here"  # 使用配置文件中的API密钥
-            }
+            f"{RUST_SERVER_URL}/management/rooms",
+            headers=headers,
+            json=room_data
         )
         
         if response.status_code == 200:
-            room_info = response.json()
-            room_id = room_info["room_id"]
+            result = response.json()
+            room_id = result['room_id']
             print(f"✅ 房间创建成功: {room_id}")
-            
-            # 关闭房间（这会触发数据同步）
-            close_response = requests.delete(
-                f"{RUST_SERVER_URL}/rooms/{room_id}",
-                headers={"X-Api-Key": "your-secret-admin-key-here"}
-            )
-            
-            if close_response.status_code == 204:
-                print("✅ 房间关闭成功，数据同步已触发")
-                
-                # 等待数据同步完成
-                time.sleep(2)
-                
-                # 检查回调服务器是否收到数据
-                stats_response = requests.get(f"{CALLBACK_SERVER_URL}/stats")
-                if stats_response.status_code == 200:
-                    stats = stats_response.json()
-                    if stats["total_rooms"] > 0:
-                        print("✅ 数据同步验证成功")
-                        return True
-                    else:
-                        print("❌ 数据同步验证失败：未找到同步的房间")
-                        return False
-                else:
-                    print("❌ 无法验证数据同步")
-                    return False
-            else:
-                print(f"❌ 房间关闭失败: {close_response.status_code}")
-                return False
+            print(f"   WebSocket URL: {result['websocket_url']}")
+            print("   📤 系统会自动触发房间创建事件回调")
+            return room_id
         else:
             print(f"❌ 房间创建失败: {response.status_code}")
-            print(f"   错误: {response.text}")
-            return False
+            print(f"   错误信息: {response.text}")
+            return None
+            
     except Exception as e:
-        print(f"❌ Rust服务器集成测试异常: {str(e)}")
-        return False
+        print(f"❌ 请求失败: {e}")
+        return None
+
+def test_split_sync_interfaces():
+    """测试拆分后的同步接口"""
+    print("\n=== 测试拆分后的同步接口 ===")
+    
+    try:
+        # 1. 获取房间基础信息
+        print("1. 测试获取房间基础信息...")
+        response = requests.get(
+            f"{RUST_SERVER_URL}/management/sync/rooms",
+            headers=headers
+        )
+        
+        if response.status_code == 200:
+            rooms = response.json()
+            print(f"   ✅ 成功获取 {len(rooms)} 个房间的基础信息")
+            
+            if rooms:
+                room_id = rooms[0]['room_id']
+                print(f"   📋 示例房间: {room_id}")
+                print(f"      名称: {rooms[0]['room_name']}")
+                print(f"      连接数: {rooms[0]['current_connections']}")
+                print(f"      管理员: {rooms[0]['admin_user_ids']}")
+                
+                # 2. 测试获取聊天记录（分页）
+                print("\n2. 测试获取聊天记录（分页）...")
+                response = requests.get(
+                    f"{RUST_SERVER_URL}/management/sync/chat-history/{room_id}",
+                    headers=headers,
+                    params={"page": 1, "limit": 10}
+                )
+                
+                if response.status_code == 200:
+                    chat_page = response.json()
+                    print(f"   ✅ 成功获取聊天记录")
+                    print(f"      房间ID: {chat_page['room_id']}")
+                    print(f"      记录数: {len(chat_page['records'])}")
+                    print(f"      分页信息: 第{chat_page['pagination']['current_page']}页，共{chat_page['pagination']['total_pages']}页")
+                    print(f"      总记录数: {chat_page['pagination']['total_records']}")
+                else:
+                    print(f"   ❌ 获取聊天记录失败: {response.status_code}")
+                
+                # 3. 测试获取会话历史（分页）
+                print("\n3. 测试获取会话历史（分页）...")
+                response = requests.get(
+                    f"{RUST_SERVER_URL}/management/sync/session-history/{room_id}",
+                    headers=headers,
+                    params={"page": 1, "limit": 10}
+                )
+                
+                if response.status_code == 200:
+                    session_page = response.json()
+                    print(f"   ✅ 成功获取会话历史")
+                    print(f"      房间ID: {session_page['room_id']}")
+                    print(f"      记录数: {len(session_page['records'])}")
+                    print(f"      分页信息: 第{session_page['pagination']['current_page']}页，共{session_page['pagination']['total_pages']}页")
+                    print(f"      总记录数: {session_page['pagination']['total_records']}")
+                else:
+                    print(f"   ❌ 获取会话历史失败: {response.status_code}")
+                
+                return room_id
+            else:
+                print("   ⚠️ 没有找到房间，跳过分页测试")
+                return None
+        else:
+            print(f"   ❌ 获取房间基础信息失败: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ 测试拆分接口失败: {e}")
+        return None
+
+def test_legacy_sync_interface():
+    """测试传统同步接口（保持向后兼容）"""
+    print("\n=== 测试传统同步接口 ===")
+    
+    try:
+        response = requests.get(
+            f"{RUST_SERVER_URL}/management/sync",
+            headers=headers
+        )
+        
+        if response.status_code == 200:
+            sync_data = response.json()
+            print(f"✅ 成功获取传统同步数据")
+            print(f"   房间数量: {len(sync_data)}")
+            
+            for room in sync_data:
+                print(f"   📋 房间: {room['room_id']}")
+                print(f"      管理员: {room['admin_user_ids']}")
+                print(f"      聊天记录: {len(room['chat_history'])}条")
+                print(f"      会话记录: {len(room['session_history'])}条")
+                print()
+        else:
+            print(f"❌ 获取传统同步数据失败: {response.status_code}")
+            
+    except Exception as e:
+        print(f"❌ 测试传统接口失败: {e}")
+
+def test_callback_server_stats():
+    """测试回调服务器统计信息"""
+    print("\n=== 测试回调服务器统计 ===")
+    
+    try:
+        # 获取房间列表
+        response = requests.get(f"{CALLBACK_SERVER_URL}/rooms")
+        if response.status_code == 200:
+            rooms = response.json()['rooms']
+            print(f"✅ 回调服务器房间列表: {len(rooms)}个房间")
+            
+            if rooms:
+                room_id = rooms[0]['room_id']
+                print(f"   最新房间: {room_id}")
+                print(f"   最后同步: {rooms[0]['last_sync_formatted']}")
+                
+                # 获取房间详情
+                response = requests.get(f"{CALLBACK_SERVER_URL}/rooms/{room_id}")
+                if response.status_code == 200:
+                    details = response.json()
+                    print(f"   📊 房间详情:")
+                    print(f"      聊天记录数: {details['chat_count']}")
+                    print(f"      会话记录数: {details['session_count']}")
+                    print(f"      最近事件数: {len(details['recent_events'])}")
+        
+        # 获取统计信息
+        response = requests.get(f"{CALLBACK_SERVER_URL}/stats")
+        if response.status_code == 200:
+            stats = response.json()
+            print(f"\n📈 回调服务器统计:")
+            print(f"   总房间数: {stats['total_rooms']}")
+            print(f"   总聊天记录: {stats['total_chat_records']}")
+            print(f"   总会话记录: {stats['total_session_records']}")
+            print(f"   总事件数: {stats['total_events']}")
+            print(f"   今日同步: {stats['today_syncs']}")
+            
+    except Exception as e:
+        print(f"❌ 测试回调服务器统计失败: {e}")
+
+def test_manual_sync_trigger():
+    """测试手动触发同步"""
+    print("\n=== 测试手动触发同步 ===")
+    
+    try:
+        response = requests.post(
+            f"{RUST_SERVER_URL}/management/sync",
+            headers=headers
+        )
+        
+        if response.status_code == 202:
+            print("✅ 手动同步已触发")
+            print("   📤 系统正在后台同步所有房间数据")
+            
+            # 等待一下让同步完成
+            time.sleep(3)
+            
+            # 检查回调服务器是否有新的同步记录
+            response = requests.get(f"{CALLBACK_SERVER_URL}/stats")
+            if response.status_code == 200:
+                stats = response.json()
+                print(f"   📊 当前统计: 今日同步 {stats['today_syncs']} 次")
+        else:
+            print(f"❌ 手动同步失败: {response.status_code}")
+            
+    except Exception as e:
+        print(f"❌ 测试手动同步失败: {e}")
+
+def test_close_room_with_events():
+    """测试关闭房间并触发事件回调"""
+    print("\n=== 测试关闭房间事件回调 ===")
+    
+    # 先创建一个房间
+    room_id = test_create_room_with_events()
+    if not room_id:
+        print("❌ 无法创建房间进行关闭测试")
+        return
+    
+    # 等待一下
+    time.sleep(2)
+    
+    try:
+        response = requests.delete(
+            f"{RUST_SERVER_URL}/management/rooms/{room_id}",
+            headers=headers
+        )
+        
+        if response.status_code == 204:
+            print(f"✅ 房间关闭成功: {room_id}")
+            print("   📤 系统会自动触发房间关闭事件回调")
+            
+            # 等待一下让回调完成
+            time.sleep(3)
+            
+            # 检查回调服务器是否有房间关闭事件
+            response = requests.get(f"{CALLBACK_SERVER_URL}/rooms/{room_id}")
+            if response.status_code == 200:
+                details = response.json()
+                print(f"   📊 回调记录: {len(details['recent_events'])} 个事件")
+        else:
+            print(f"❌ 房间关闭失败: {response.status_code}")
+            
+    except Exception as e:
+        print(f"❌ 测试关闭房间失败: {e}")
 
 def main():
-    """主函数"""
-    print("🚀 房间信息同步回调系统测试")
-    print("=" * 50)
+    """主测试函数"""
+    print("🚀 房间信息同步回调系统 - 完整测试")
+    print("=" * 60)
     
-    # 检查回调服务器是否运行
-    print("1. 检查回调服务器状态...")
-    try:
-        response = requests.get(f"{CALLBACK_SERVER_URL}/health", timeout=5)
-        if response.status_code != 200:
-            print("❌ 回调服务器未正常运行")
-            print("请先启动回调服务器: python callback_server.py")
-            return
-    except requests.exceptions.ConnectionError:
-        print("❌ 回调服务器未运行")
-        print("请先启动回调服务器: python callback_server.py")
+    # 1. 健康检查
+    if not test_health_check():
+        print("❌ 服务器未运行，请先启动Rust服务器和回调服务器")
         return
     
-    # 测试回调服务器功能
-    print("\n2. 测试回调服务器功能...")
-    if not test_callback_server():
-        print("❌ 回调服务器功能测试失败")
-        return
+    # 2. 测试创建房间事件
+    room_id = test_create_room_with_events()
     
-    # 测试Rust服务器集成
-    print("\n3. 测试Rust服务器集成...")
-    if not test_rust_server_integration():
-        print("❌ Rust服务器集成测试失败")
-        return
+    # 3. 测试拆分后的同步接口
+    test_split_sync_interfaces()
     
-    print("\n🎉 所有测试通过！")
-    print("\n使用说明:")
-    print("1. 启动回调服务器: python callback_server.py")
-    print("2. 启动Rust服务器: cargo run")
-    print("3. 配置Rust服务器的config.toml文件，设置data_callback_url")
-    print("4. 当房间关闭时，数据会自动同步到回调服务器")
+    # 4. 测试传统同步接口
+    test_legacy_sync_interface()
+    
+    # 5. 测试手动触发同步
+    test_manual_sync_trigger()
+    
+    # 6. 测试回调服务器统计
+    test_callback_server_stats()
+    
+    # 7. 测试关闭房间事件
+    test_close_room_with_events()
+    
+    print("\n" + "=" * 60)
+    print("🎉 测试完成！")
+    print("\n📝 功能说明:")
+    print("1. 房间事件回调 - 实时房间创建、关闭、用户加入/离开事件")
+    print("2. 聊天记录批次回调 - 支持大数据量的分页传输")
+    print("3. 会话历史批次回调 - 支持大数据量的分页传输")
+    print("4. 定时同步回调 - 定期同步房间基础信息")
+    print("5. 传统同步接口 - 保持向后兼容的完整数据同步")
+    print("6. 拆分后的查询接口 - 支持分页查询聊天记录和会话历史")
+    print("\n🔧 配置说明:")
+    print("- 传统接口: DATA_CALLBACK_URL")
+    print("- 房间事件: ROOM_EVENT_CALLBACK_URL")
+    print("- 聊天记录: CHAT_HISTORY_CALLBACK_URL")
+    print("- 会话历史: SESSION_HISTORY_CALLBACK_URL")
+    print("- 定时同步: PERIODIC_SYNC_CALLBACK_URL")
 
 if __name__ == "__main__":
     main() 

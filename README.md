@@ -12,6 +12,7 @@
 - 📊 房间统计
 - 💾 数据持久化（可选）
 - 🔄 智能数据同步策略
+- 📤 拆分式回调系统
 
 ## 快速开始
 
@@ -29,7 +30,26 @@ ADMIN_API_KEY=your_secret_api_key
 
 # 可选配置
 MAX_CONNECTIONS=100000
+
+# 传统同步配置（保持向后兼容）
 DATA_CALLBACK_URL=http://example.com/callback
+
+# 拆分后的回调URL配置
+ROOM_EVENT_CALLBACK_URL=http://example.com/api/room-events
+CHAT_HISTORY_CALLBACK_URL=http://example.com/api/chat-history
+SESSION_HISTORY_CALLBACK_URL=http://example.com/api/session-history
+PERIODIC_SYNC_CALLBACK_URL=http://example.com/api/periodic-sync
+
+# 回调配置
+CHAT_HISTORY_BATCH_SIZE=1000
+SESSION_HISTORY_BATCH_SIZE=500
+CHAT_HISTORY_BATCH_INTERVAL_SECONDS=300
+SESSION_HISTORY_BATCH_INTERVAL_SECONDS=600
+
+# 回调重试配置
+CALLBACK_MAX_RETRIES=3
+CALLBACK_RETRY_DELAY_SECONDS=5
+CALLBACK_TIMEOUT_SECONDS=30
 
 # 数据同步配置
 SYNC_INTERVAL_SECONDS=300  # 定时同步间隔（秒），默认5分钟
@@ -60,7 +80,7 @@ curl -X POST http://localhost:3000/management/rooms \
   }'
 ```
 
-**注意：** 创建房间时会自动触发一次数据同步。
+**注意：** 创建房间时会自动触发一次数据同步和房间创建事件回调。
 
 ### 查询所有房间
 
@@ -77,7 +97,7 @@ ws://localhost:3000/ws/rooms/{room_id}?user_id={user_id}
 
 ### 数据同步接口
 
-#### 获取所有房间的同步数据
+#### 获取所有房间的同步数据（传统接口）
 
 ```bash
 curl -X GET http://localhost:3000/management/sync \
@@ -91,9 +111,32 @@ curl -X POST http://localhost:3000/management/sync \
   -H "X-Api-Key: your_secret_api_key"
 ```
 
+### 拆分后的同步接口
+
+#### 获取房间基础信息
+
+```bash
+curl -X GET http://localhost:3000/management/sync/rooms \
+  -H "X-Api-Key: your_secret_api_key"
+```
+
+#### 获取聊天记录（分页）
+
+```bash
+curl -X GET "http://localhost:3000/management/sync/chat-history/{room_id}?page=1&limit=1000&from=1640995200&to=1640998800" \
+  -H "X-Api-Key: your_secret_api_key"
+```
+
+#### 获取会话历史（分页）
+
+```bash
+curl -X GET "http://localhost:3000/management/sync/session-history/{room_id}?page=1&limit=500&from=1640995200&to=1640998800" \
+  -H "X-Api-Key: your_secret_api_key"
+```
+
 ## 数据同步策略
 
-系统支持三种数据同步方式：
+系统支持多种数据同步方式：
 
 ### 1. 创建房间时同步
 每次创建新房间时，系统会自动触发一次数据同步，将房间信息发送到配置的外部系统。
@@ -103,6 +146,29 @@ curl -X POST http://localhost:3000/management/sync \
 
 ### 3. 外部系统主动拉取
 外部系统可以通过 `/management/sync` GET 接口主动获取所有房间的同步数据。
+
+### 4. 拆分式回调系统
+
+#### 房间事件回调（实时）
+- 房间创建事件
+- 房间关闭事件
+- 用户加入事件
+- 用户离开事件
+
+#### 聊天记录批次回调（大数据量）
+- 支持分页传输
+- 可配置批次大小
+- 支持时间范围过滤
+
+#### 会话历史批次回调（大数据量）
+- 支持分页传输
+- 可配置批次大小
+- 支持时间范围过滤
+
+#### 定时同步回调
+- 房间基础信息
+- 当前统计
+- 数据一致性检查
 
 ## 数据库配置
 
@@ -126,6 +192,44 @@ SYNC_INTERVAL_SECONDS=300
 DATABASE_URL=sqlite:./chat_server.db
 ADMIN_API_KEY=your_secret_api_key
 SYNC_INTERVAL_SECONDS=300
+```
+
+## 回调系统配置
+
+### 传统回调（保持向后兼容）
+```bash
+DATA_CALLBACK_URL=http://your-external-system.com/sync/room
+```
+
+### 拆分式回调
+```bash
+# 房间事件（实时）
+ROOM_EVENT_CALLBACK_URL=http://your-external-system.com/api/room-events
+
+# 聊天记录（批量）
+CHAT_HISTORY_CALLBACK_URL=http://your-external-system.com/api/chat-history
+
+# 会话历史（批量）
+SESSION_HISTORY_CALLBACK_URL=http://your-external-system.com/api/session-history
+
+# 定时同步
+PERIODIC_SYNC_CALLBACK_URL=http://your-external-system.com/api/periodic-sync
+```
+
+### 回调配置选项
+```bash
+# 批次大小
+CHAT_HISTORY_BATCH_SIZE=1000
+SESSION_HISTORY_BATCH_SIZE=500
+
+# 批次间隔
+CHAT_HISTORY_BATCH_INTERVAL_SECONDS=300
+SESSION_HISTORY_BATCH_INTERVAL_SECONDS=600
+
+# 重试配置
+CALLBACK_MAX_RETRIES=3
+CALLBACK_RETRY_DELAY_SECONDS=5
+CALLBACK_TIMEOUT_SECONDS=30
 ```
 
 ## 开发
@@ -156,5 +260,26 @@ src/
 ├── models.rs       # 数据模型
 ├── routes.rs       # HTTP 路由
 ├── state.rs        # 应用状态
-└── sync.rs         # 数据同步服务
+├── sync.rs         # 数据同步服务
+└── callback.rs     # 回调服务
+```
+
+## 示例和测试
+
+### 回调服务器示例
+```bash
+cd example/callback
+python callback_server.py
+```
+
+### 测试脚本
+```bash
+cd example/callback
+python test_callback.py
+```
+
+### 配置示例
+```bash
+cp example/callback/config_example.toml .env
+# 编辑 .env 文件配置回调URL
 ```

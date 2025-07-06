@@ -7,9 +7,10 @@ use crate::{
     db,
     error::AppError,
     handler,
-    models::{CreateRoomRequest, CreateRoomResponse, DataSyncPayload, ResetAdminsRequest, RoomDetailsResponse, StatsQuery, ControlMessage},
+    models::{CreateRoomRequest, CreateRoomResponse, DataSyncPayload, ResetAdminsRequest, RoomDetailsResponse, StatsQuery, ControlMessage, RoomBasicInfo, ChatHistoryPage, SessionHistoryPage, PaginationQuery},
     state::AppState,
     sync::SyncService,
+    callback::CallbackService,
 };
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
@@ -84,14 +85,21 @@ pub async fn create_room(
 
     // 创建房间后立即同步数据
     if let Some(_callback_url) = &state.config.data_callback_url {
+        let state_clone = state.clone();
         tokio::spawn(async move {
-            if let Err(e) = SyncService::sync_room(room_id, &state, &state.config).await {
+            if let Err(e) = SyncService::sync_room(room_id, &state_clone, &state_clone.config).await {
                 tracing::error!("创建房间后同步失败: {}", e);
             } else {
                 tracing::info!("创建房间后同步成功，房间ID: {}", room_id);
             }
         });
     }
+
+    // 发送房间创建事件回调
+    let callback_service = CallbackService::new(state.config.clone());
+    tokio::spawn(async move {
+        callback_service.send_room_created(room_id, room_name, admin_ids).await;
+    });
 
     let websocket_url = format!("/ws/rooms/{}", room_id);
     Ok(Json(CreateRoomResponse { room_id, websocket_url }))
@@ -117,6 +125,76 @@ pub async fn list_rooms(
     }
 
     Ok(Json(details_list))
+}
+
+// 获取房间基础信息（拆分后的接口）
+pub async fn get_rooms_basic_info(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<RoomBasicInfo>>, AppError> {
+    check_auth(&headers, &state.config)?;
+
+    let mut rooms_info = Vec::new();
+    
+    // 收集所有房间信息，避免生命周期问题
+    let room_info: Vec<(Uuid, tokio::sync::mpsc::Sender<StatsQuery>)> = {
+        let rooms = state.rooms.lock().await;
+        rooms.iter()
+            .map(|(room_id, room)| (*room_id, room.stats_tx.clone()))
+            .collect()
+    };
+
+    for (room_id, stats_tx) in room_info {
+        // 获取数据库中的房间基础信息
+        if let Ok(Some(mut room_basic)) = db::get_room_basic_info(&state.db_pool, room_id).await {
+            // 获取当前连接数
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if stats_tx.send(StatsQuery { response_tx: tx }).await.is_ok() {
+                if let Ok(details) = rx.await {
+                    room_basic.current_connections = details.stats.current_users;
+                }
+            }
+            rooms_info.push(room_basic);
+        }
+    }
+
+    Ok(Json(rooms_info))
+}
+
+// 获取聊天记录（分页）
+pub async fn get_chat_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(room_id): Path<Uuid>,
+    Query(query): Query<PaginationQuery>,
+) -> Result<Json<ChatHistoryPage>, AppError> {
+    check_auth(&headers, &state.config)?;
+
+    // 检查房间是否存在
+    if !state.rooms.lock().await.contains_key(&room_id) {
+        return Err(AppError::NotFound(format!("Room {} not found", room_id)));
+    }
+
+    let chat_page = db::get_chat_history_page(&state.db_pool, room_id, &query).await?;
+    Ok(Json(chat_page))
+}
+
+// 获取会话历史（分页）
+pub async fn get_session_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(room_id): Path<Uuid>,
+    Query(query): Query<PaginationQuery>,
+) -> Result<Json<SessionHistoryPage>, AppError> {
+    check_auth(&headers, &state.config)?;
+
+    // 检查房间是否存在
+    if !state.rooms.lock().await.contains_key(&room_id) {
+        return Err(AppError::NotFound(format!("Room {} not found", room_id)));
+    }
+
+    let session_page = db::get_session_history_page(&state.db_pool, room_id, &query).await?;
+    Ok(Json(session_page))
 }
 
 // 重置管理员
@@ -187,6 +265,16 @@ pub async fn close_room(
     };
 
     if let Some(room) = room_state {
+        // 获取房间统计信息用于回调
+        let final_stats = {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if room.stats_tx.send(StatsQuery { response_tx: tx }).await.is_ok() {
+                rx.await.ok().map(|details| details.stats)
+            } else {
+                None
+            }
+        };
+
         // 触发数据同步
         if let Some(callback_url) = &state.config.data_callback_url {
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -197,6 +285,15 @@ pub async fn close_room(
                 }
             }
         }
+
+        // 发送房间关闭事件回调
+        if let Some(stats) = final_stats {
+            let callback_service = CallbackService::new(state.config.clone());
+            tokio::spawn(async move {
+                callback_service.send_room_closed(room_id, stats).await;
+            });
+        }
+
         drop(room);
     } else {
         return Err(AppError::NotFound(format!("Room {} not found", room_id)));

@@ -103,6 +103,105 @@ pub struct RoomDetailsResponse {
     pub stats: RoomStats,
 }
 
+// 拆分后的数据模型
+#[derive(Serialize, Clone, Debug)]
+pub struct RoomBasicInfo {
+    pub room_id: Uuid,
+    pub room_name: String,
+    pub admin_user_ids: HashSet<String>,
+    pub current_connections: u32,
+    pub created_at: i64,
+    pub last_activity: i64,
+}
+
+#[derive(Serialize)]
+pub struct ChatHistoryPage {
+    pub room_id: Uuid,
+    pub records: Vec<db::ChatHistoryEntry>,
+    pub pagination: PaginationInfo,
+}
+
+#[derive(Serialize)]
+pub struct SessionHistoryPage {
+    pub room_id: Uuid,
+    pub records: Vec<db::SessionHistoryEntry>,
+    pub pagination: PaginationInfo,
+}
+
+#[derive(Serialize)]
+pub struct PaginationInfo {
+    pub current_page: u32,
+    pub total_pages: u32,
+    pub total_records: u64,
+    pub page_size: u32,
+    pub has_next: bool,
+    pub has_prev: bool,
+}
+
+// 分页查询参数
+#[derive(Deserialize)]
+pub struct PaginationQuery {
+    pub page: Option<u32>,
+    pub limit: Option<u32>,
+    pub from: Option<i64>,
+    pub to: Option<i64>,
+}
+
+// 回调事件类型
+#[derive(Serialize, Debug)]
+#[serde(tag = "event_type")]
+pub enum CallbackEvent {
+    // 房间事件（实时）
+    RoomCreated {
+        room_id: Uuid,
+        room_name: String,
+        admin_ids: Vec<String>,
+        timestamp: i64,
+    },
+    RoomClosed {
+        room_id: Uuid,
+        final_stats: RoomStats,
+        timestamp: i64,
+    },
+    UserJoined {
+        room_id: Uuid,
+        user_id: String,
+        timestamp: i64,
+    },
+    UserLeft {
+        room_id: Uuid,
+        user_id: String,
+        duration: i64,
+        timestamp: i64,
+    },
+    
+    // 聊天记录（批量）
+    ChatHistoryBatch {
+        room_id: Uuid,
+        messages: Vec<db::ChatHistoryEntry>,
+        batch_id: String,
+        is_last_batch: bool,
+        timestamp: i64,
+    },
+    
+    // 会话历史（批量）
+    SessionHistoryBatch {
+        room_id: Uuid,
+        sessions: Vec<db::SessionHistoryEntry>,
+        batch_id: String,
+        is_last_batch: bool,
+        timestamp: i64,
+    },
+    
+    // 定时同步（完整房间信息）
+    PeriodicSync {
+        room_id: Uuid,
+        room_info: RoomBasicInfo,
+        last_sync_time: i64,
+    },
+}
+
+// 保持向后兼容的旧数据结构
 #[derive(Serialize)]
 pub struct DataSyncPayload {
     pub room_id: Uuid,

@@ -1,39 +1,42 @@
-# 房间信息同步回调服务器配置示例
-# 将此文件重命名为 config.toml 并放在项目根目录
+# 房间信息同步回调系统配置示例
+# 复制此文件为 .env 并根据需要修改
 
-[server]
-# 服务器监听地址
-host = "127.0.0.1"
-# 服务器端口
-port = 3000
-# 最大连接数
-max_connections = 1000
+# 基础服务器配置
+BIND_ADDRESS=0.0.0.0:3000
+ADMIN_API_KEY=your_secret_api_key_here
 
-[admin]
-# 管理员API密钥，用于认证管理接口
-api_key = "your-secret-admin-key-here"
+# 数据库配置
+# 使用内存数据库（重启后数据丢失）
+DATABASE_URL=sqlite::memory:
 
-[database]
-# 数据库连接URL
-url = "sqlite:data.db"
+# 或使用文件数据库（数据持久化）
+# DATABASE_URL=sqlite:./chat_server.db
 
-[callback]
-# 数据同步回调URL - 当房间关闭时会向此URL发送房间数据
-# 支持HTTP和HTTPS
-data_callback_url = "http://localhost:8080/sync/room"
+# 连接限制
+MAX_CONNECTIONS=100000
 
-# 可选：回调超时设置（秒）
-timeout_seconds = 30
+# 数据同步配置（保持向后兼容）
+DATA_CALLBACK_URL=http://localhost:8080/sync/room
 
-# 可选：重试设置
-max_retries = 3
-retry_delay_seconds = 5
+# 拆分后的回调URL配置
+ROOM_EVENT_CALLBACK_URL=http://localhost:8080/api/room-events
+CHAT_HISTORY_CALLBACK_URL=http://localhost:8080/api/chat-history
+SESSION_HISTORY_CALLBACK_URL=http://localhost:8080/api/session-history
+PERIODIC_SYNC_CALLBACK_URL=http://localhost:8080/api/periodic-sync
 
-# 可选：回调认证（如果需要）
-# auth_header = "Authorization: Bearer your-callback-token"
+# 回调配置
+CHAT_HISTORY_BATCH_SIZE=1000
+SESSION_HISTORY_BATCH_SIZE=500
+CHAT_HISTORY_BATCH_INTERVAL_SECONDS=300
+SESSION_HISTORY_BATCH_INTERVAL_SECONDS=600
 
-[logging]
-# 日志级别: debug, info, warn, error
-level = "info"
-# 日志文件路径（可选）
-# file = "logs/app.log" 
+# 回调重试配置
+CALLBACK_MAX_RETRIES=3
+CALLBACK_RETRY_DELAY_SECONDS=5
+CALLBACK_TIMEOUT_SECONDS=30
+
+# 定时同步配置
+SYNC_INTERVAL_SECONDS=300
+
+# 日志级别
+RUST_LOG=chat_server=info,tower_http=info 
