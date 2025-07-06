@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聊天室测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .chat-area {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+        }
+        .input-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .message.system {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+        .message.user {
+            background-color: #f3e5f5;
+        }
+        .message.admin {
+            background-color: #fff3e0;
+            color: #f57c00;
+        }
+        input, button {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .status {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 3px;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <h1>聊天室测试</h1>
+    
+    <div class="status disconnected" id="status">未连接</div>
+    
+    <div class="container">
+        <div class="chat-area" id="chatArea">
+            <div class="message system">欢迎使用聊天室测试工具！</div>
+        </div>
+        
+        <div class="input-area">
+            <div>
+                <label for="roomId">房间ID:</label>
+                <input type="text" id="roomId" value="4e52fe78-93a1-4efa-8b8b-b319f89049e4" style="width: 100%;">
+            </div>
+            
+            <div>
+                <label for="userId">用户ID:</label>
+                <input type="text" id="userId" value="user123" style="width: 100%;">
+            </div>
+            
+            <button onclick="connect()">连接</button>
+            <button onclick="disconnect()">断开</button>
+            
+            <hr>
+            
+            <div>
+                <label for="messageInput">消息:</label>
+                <input type="text" id="messageInput" placeholder="输入消息..." style="width: 100%;">
+            </div>
+            
+            <button onclick="sendMessage()">发送消息</button>
+            
+            <hr>
+            
+            <div>
+                <label for="targetUserId">目标用户ID:</label>
+                <input type="text" id="targetUserId" placeholder="user123" style="width: 100%;">
+            </div>
+            
+            <button onclick="kickUser()">踢出用户</button>
+            <button onclick="muteUser()">禁言用户</button>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        
+        function updateStatus(connected) {
+            const status = document.getElementById('status');
+            if (connected) {
+                status.textContent = '已连接';
+                status.className = 'status connected';
+            } else {
+                status.textContent = '未连接';
+                status.className = 'status disconnected';
+            }
+        }
+        
+        function addMessage(message, type = 'user') {
+            const chatArea = document.getElementById('chatArea');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            messageDiv.textContent = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+        
+        function connect() {
+            const roomId = document.getElementById('roomId').value;
+            const userId = document.getElementById('userId').value;
+            
+            if (!roomId || !userId) {
+                alert('请输入房间ID和用户ID');
+                return;
+            }
+            
+            const url = `ws://localhost:3000/ws/rooms/${roomId}?user_id=${userId}`;
+            
+            ws = new WebSocket(url);
+            
+            ws.onopen = function() {
+                updateStatus(true);
+                addMessage('WebSocket连接成功！', 'system');
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    addMessage(message, 'user');
+                } catch (e) {
+                    addMessage(event.data, 'user');
+                }
+            };
+            
+            ws.onclose = function() {
+                updateStatus(false);
+                addMessage('WebSocket连接已关闭', 'system');
+            };
+            
+            ws.onerror = function(error) {
+                updateStatus(false);
+                addMessage('WebSocket错误: ' + error, 'system');
+            };
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+        
+        function sendMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('请先连接WebSocket');
+                return;
+            }
+            
+            const content = document.getElementById('messageInput').value;
+            if (!content) {
+                alert('请输入消息内容');
+                return;
+            }
+            
+            const message = {
+                type: "SendMessage",
+                payload: {
+                    content: content
+                }
+            };
+            
+            ws.send(JSON.stringify(message));
+            document.getElementById('messageInput').value = '';
+        }
+        
+        function kickUser() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('请先连接WebSocket');
+                return;
+            }
+            
+            const targetUserId = document.getElementById('targetUserId').value;
+            if (!targetUserId) {
+                alert('请输入目标用户ID');
+                return;
+            }
+            
+            const message = {
+                type: "KickUser",
+                payload: {
+                    user_id: targetUserId
+                }
+            };
+            
+            ws.send(JSON.stringify(message));
+        }
+        
+        function muteUser() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('请先连接WebSocket');
+                return;
+            }
+            
+            const targetUserId = document.getElementById('targetUserId').value;
+            if (!targetUserId) {
+                alert('请输入目标用户ID');
+                return;
+            }
+            
+            const message = {
+                type: "MuteUser",
+                payload: {
+                    user_id: targetUserId
+                }
+            };
+            
+            ws.send(JSON.stringify(message));
+        }
+        
+        // 回车发送消息
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html> 
