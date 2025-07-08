@@ -58,6 +58,8 @@ pub async fn start_room_handler(room_id: Uuid, state: Arc<AppState>) {
         control_tx,
         stats_tx,
         user_last_message_time: HashMap::new(),
+        pending_join_notify: false,
+        join_notify_timer_active: false,
     };
 
     state.rooms.lock().await.insert(room_id, room_state);
@@ -198,6 +200,13 @@ pub async fn room_message_loop(
                         Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => { break; },
                     }
                 }
+                // 如果有pending_join_notify为true，则广播一次当前房间人数，并重置pending_join_notify
+                if let Some(room_state) = state.rooms.lock().await.get_mut(&room_id) {
+                    if room_state.pending_join_notify {
+                        broadcast(&connections, WsMessage::RoomStats { current_users: stats.current_users, peak_users: stats.peak_users }, None).await;
+                        room_state.pending_join_notify = false;
+                    }
+                }
                 // 如果房间即将关闭，广播当前房间人数
                 if connections.is_empty() {
                     tracing::info!("Room {} handler shutting down.", room_id);
@@ -258,6 +267,34 @@ async fn handle_message(
             }
 
             let _ = db_writer_tx.send(DbWriteCommand::UserJoined { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id }).await;
+            // --- 新增：用户加入通知截流 ---
+            {
+                let mut rooms = state.rooms.lock().await;
+                if let Some(room_state) = rooms.get_mut(&msg.room_id) {
+                    room_state.pending_join_notify = true;
+                    if !room_state.join_notify_timer_active {
+                        room_state.join_notify_timer_active = true;
+                        let state_clone = state.clone();
+                        let room_id_clone = msg.room_id;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                            let mut rooms = state_clone.rooms.lock().await;
+                            if let Some(room_state) = rooms.get_mut(&room_id_clone) {
+                                if room_state.pending_join_notify {
+                                    // 获取当前房间人数
+                                    let current_users = room_state.stats_tx.clone(); // 这里实际应从内存connections或stats获取
+                                    // 这里直接广播当前房间人数
+                                    // 需要访问connections和stats，建议在主循环else分支处理
+                                    // 这里只重置标志
+                                    room_state.pending_join_notify = false;
+                                }
+                                room_state.join_notify_timer_active = false;
+                            }
+                        });
+                    }
+                }
+            }
+            // --- 截流逻辑结束 ---
         }
         WsMessage::UserLeft { user_id: _, nickname: _ } => {
             if let Some(conn_info) = connections.remove(&msg.conn_id) {

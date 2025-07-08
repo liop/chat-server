@@ -38,6 +38,8 @@ pub struct RoomState {
     pub control_tx: mpsc::Sender<ControlMessage>,
     pub stats_tx: mpsc::Sender<StatsQuery>,
     pub user_last_message_time: HashMap<String, i64>, // 新增：用户上次发言时间戳
+    pub pending_join_notify: bool, // 新增：是否有待推送的用户加入通知
+    pub join_notify_timer_active: bool, // 新增：定时器是否激活
 }
 
 // 房间控制消息
