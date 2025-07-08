@@ -126,19 +126,7 @@ curl -X GET http://localhost:3000/management/sync/rooms \
   -H "X-Api-Key: your_secret_api_key"
 ```
 
-#### 获取聊天记录（分页）
-
-```bash
-curl -X GET "http://localhost:3000/management/sync/chat-history/{room_id}?page=1&limit=1000&from=1640995200&to=1640998800" \
-  -H "X-Api-Key: your_secret_api_key"
-```
-
-#### 获取会话历史（分页）
-
-```bash
-curl -X GET "http://localhost:3000/management/sync/session-history/{room_id}?page=1&limit=500&from=1640995200&to=1640998800" \
-  -H "X-Api-Key: your_secret_api_key"
-```
+ 
 
 ## 数据同步策略
 
