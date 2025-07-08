@@ -57,6 +57,7 @@ pub async fn start_room_handler(room_id: Uuid, state: Arc<AppState>) {
         db_writer_tx: db_writer_tx.clone(),
         control_tx,
         stats_tx,
+        user_last_message_time: HashMap::new(),
     };
 
     state.rooms.lock().await.insert(room_id, room_state);
@@ -242,8 +243,29 @@ async fn handle_message(
                 let _ = conn_info.sender.send(WsMessage::YouAreMuted).await;
                 return;
             }
+            let is_admin = conn_info.is_admin;
+            if !is_admin {
+                // 频率限制
+                let rooms = state.rooms.lock().await;
+                if let Some(room_state) = rooms.get(&msg.room_id) {
+                    let now = chrono::Utc::now().timestamp();
+                    let last = room_state.user_last_message_time.get(&msg.user_id).copied().unwrap_or(0);
+                    let min_interval = state.config.user_message_interval_secs as i64;
+                    if now - last < min_interval {
+                        let _ = conn_info.sender.send(WsMessage::Error { message: format!("发送过于频繁，请{}秒后再试", min_interval - (now - last)) }).await;
+                        return;
+                    }
+                }
+            }
+            // 更新发言时间
+            {
+                let mut rooms = state.rooms.lock().await;
+                if let Some(room_state) = rooms.get_mut(&msg.room_id) {
+                    room_state.user_last_message_time.insert(msg.user_id.clone(), chrono::Utc::now().timestamp());
+                }
+            }
             let _ = db_writer_tx.send(DbWriteCommand::ChatMessage { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id, content: content.clone() }).await;
-            broadcast(connections, WsMessage::Message { from: msg.user_id, nickname: msg.nickname, content: content.clone(), is_admin: conn_info.is_admin }, None).await;
+            broadcast(connections, WsMessage::Message { from: msg.user_id, nickname: msg.nickname, content: content.clone(), is_admin }, None).await;
         }
         WsMessage::KickUser { user_id } => {
             let conn_info = if let Some(info) = connections.get(&msg.conn_id) { info } else { return; };

@@ -3,7 +3,7 @@
 // src/models.rs - 数据模型定义
 // ====================================================================================
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use crate::db;
@@ -35,6 +35,7 @@ pub struct RoomState {
     pub db_writer_tx: mpsc::Sender<DbWriteCommand>,
     pub control_tx: mpsc::Sender<ControlMessage>,
     pub stats_tx: mpsc::Sender<StatsQuery>,
+    pub user_last_message_time: HashMap<String, i64>, // 新增：用户上次发言时间戳
 }
 
 // 房间控制消息

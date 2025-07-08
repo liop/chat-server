@@ -27,6 +27,7 @@ pub struct Config {
     pub callback_max_retries: u32,
     pub callback_retry_delay_seconds: u64,
     pub callback_timeout_seconds: u64,
+    pub user_message_interval_secs: u64, // 普通用户发言最小间隔，单位秒
 }
 
 impl Config {
@@ -92,6 +93,10 @@ impl Config {
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()
                 .expect("CALLBACK_TIMEOUT_SECONDS must be a valid number"),
+            user_message_interval_secs: std::env::var("USER_MESSAGE_INTERVAL_SECS")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .expect("USER_MESSAGE_INTERVAL_SECS must be a valid number"),
         })
     }
 }
