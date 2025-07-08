@@ -140,14 +140,15 @@ pub async fn room_message_loop(
     let mut stats = RoomStats::default();
     let start_time = chrono::Utc::now().timestamp();
 
+    const LOW_PRIO_SLICE: usize = 200; // 每处理200条低优先级消息让步一次
+
     loop {
+        // 优先处理高优先级消息
         tokio::select! {
             Some(msg) = high_prio_rx.recv() => {
                 handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
             },
-            Some(msg) = normal_prio_rx.recv() => {
-                handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
-            },
+            // 其它高优先级通道
             Some(ctrl_msg) = control_rx.recv() => {
                 match ctrl_msg {
                     ControlMessage::ResetAdmins(new_admins) => {
@@ -171,10 +172,36 @@ pub async fn room_message_loop(
                 let _ = query.response_tx.send(response);
             },
             else => {
-                tracing::info!("Room {} handler shutting down.", room_id);
-                // 广播当前房间人数
-                broadcast(&connections, WsMessage::RoomStats { current_users: stats.current_users, peak_users: stats.peak_users }, None).await;
-                break;
+                // 低优先级消息分片处理
+                let mut count = 0;
+                loop {
+                    // 先检查高优先级队列是否有消息
+                    if let Ok(Some(msg)) = high_prio_rx.try_recv() {
+                        handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
+                        break; // 让出分片，回到tokio::select!
+                    }
+                    // 处理一条低优先级消息
+                    match normal_prio_rx.try_recv() {
+                        Ok(Some(msg)) => {
+                            handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
+                            count += 1;
+                            if count >= LOW_PRIO_SLICE {
+                                // 分片让步，回到tokio::select!，优先响应高优先级
+                                break;
+                            }
+                        },
+                        Ok(None) | Err(_) => {
+                            // 没有低优先级消息，进入下一轮select
+                            break;
+                        }
+                    }
+                }
+                // 如果房间即将关闭，广播当前房间人数
+                if connections.is_empty() {
+                    tracing::info!("Room {} handler shutting down.", room_id);
+                    broadcast(&connections, WsMessage::RoomStats { current_users: stats.current_users, peak_users: stats.peak_users }, None).await;
+                    break;
+                }
             }
         }
     }
