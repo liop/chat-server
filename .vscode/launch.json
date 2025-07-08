@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+      {
+          "type": "lldb",
+          "request": "launch",
+          "name": "Debug executable 'your_program_name'",
+          "program": "${workspaceFolder}/target/debug/chat_server",
+          "cwd": "${workspaceFolder}",
+          "preLaunchTask": "cargo build"
+      }
+  ]
+}

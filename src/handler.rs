@@ -76,14 +76,16 @@ pub async fn start_room_handler(room_id: Uuid, state: Arc<AppState>) {
 
 // 处理单个WebSocket连接
 pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uuid, user_id: String, nickname: String) {
+  tracing::debug!("开始处理socket {}", room_id);
     let _conn_guard = ConnectionGuard::new(state.total_connections.clone());
     let conn_id = Uuid::new_v4();
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     let room_tx = {
         let rooms = state.rooms.lock().await;
+        tracing::debug!("rooms: {:?}", rooms);
         if let Some(room) = rooms.get(&room_id) {
-            Some(room.normal_prio_tx.clone())
+            Some(room.high_prio_tx.clone())
         } else {
             let error_msg = serde_json::to_string(&WsMessage::Error { message: "房间已关闭".to_string() }).unwrap();
             let _ = ws_sender.send(axum::extract::ws::Message::Text(error_msg)).await;
@@ -93,7 +95,7 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uui
     let Some(room_tx) = room_tx else { return; };
 
     let (tx, mut rx) = mpsc::channel(10);
-
+    tracing::debug!("before send   {}", room_id);
     if room_tx.send(InternalMessage {
         conn_id, user_id: user_id.clone(), nickname: nickname.clone(), room_id,
         content: WsMessage::UserJoined { user_id: user_id.clone(), nickname: nickname.clone() },
@@ -102,6 +104,19 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uui
         tracing::warn!("Failed to register new user, room handler might be down.");
         return;
     }
+    if let Some(msg) = rx.recv().await {
+      match msg {
+          WsMessage::WelcomeInfo { .. } => {
+              // 加入成功
+              tracing::debug!("加入成功");
+          }
+          WsMessage::Error { message } => {
+              // 加入失败，message里有原因
+              tracing::debug!("加入失败: {}", message);
+          }
+          _ => {}
+      }
+  }
 
     let ws_sender = Arc::new(tokio::sync::Mutex::new(ws_sender));
 
@@ -116,6 +131,13 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uui
     });
 
     while let Some(Ok(msg)) = ws_receiver.next().await {
+        tracing::debug!(?msg, "收到 WebSocket 消息");
+        // 先获取文本内容用于日志
+        let msg_text = if let axum::extract::ws::Message::Text(ref text) = msg {
+            Some(text.clone())
+        } else {
+            None
+        };
         if let Ok(ws_msg) = WsMessage::try_from(msg) {
             match ws_msg {
                 WsMessage::Ping { timestamp } => {
@@ -131,6 +153,8 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uui
                     }).await.is_err() { break; }
                 }
             }
+        } else {
+            tracing::warn!("WebSocket 消息解析失败: {:?}", msg_text);
         }
     }
 
@@ -158,15 +182,18 @@ pub async fn room_message_loop(
     let start_time = chrono::Utc::now().timestamp();
 
     const LOW_PRIO_SLICE: usize = 200; // 每处理200条低优先级消息让步一次
+    tracing::debug!("room_message_loop: {}", room_id);
 
     loop {
         // 优先处理高优先级消息
         tokio::select! {
             Some(msg) = high_prio_rx.recv() => {
+                tracing::debug!("room_message_loop: high_prio_rx: {}", room_id);
                 handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
             },
             // 其它高优先级通道
             Some(ctrl_msg) = control_rx.recv() => {
+              tracing::debug!("room_message_loop: control_rx: {}", room_id);
                 match ctrl_msg {
                     ControlMessage::ResetAdmins(new_admins) => {
                         admin_users = new_admins;
@@ -180,6 +207,7 @@ pub async fn room_message_loop(
                 }
             },
             Some(query) = stats_rx.recv() => {
+                tracing::debug!("room_message_loop: stats_rx: {}", room_id);
                 // 查询房间名称
                 let room_name = match db::get_room_basic_info(&state.db_pool, room_id).await {
                     Ok(Some(info)) => info.room_name,
@@ -195,6 +223,7 @@ pub async fn room_message_loop(
                 let _ = query.response_tx.send(response);
             },
             else => {
+                tracing::debug!("room_message_loop: else: {}", room_id);
                 // 分片处理部分修正如下：
                 let mut count = 0;
                 loop {
@@ -250,6 +279,7 @@ async fn handle_message(
     state: &Arc<AppState>,
     stats: &mut RoomStats,
 ) {
+    tracing::info!("handle_message 开始处理消息 {}", msg.room_id);
     let db_writer_tx = {
         let rooms = state.rooms.lock().await;
         rooms.get(&msg.room_id).map(|r| r.db_writer_tx.clone())
@@ -257,7 +287,8 @@ async fn handle_message(
     let Some(db_writer_tx) = db_writer_tx else { return; };
 
     match msg.content {
-        WsMessage::UserJoined { user_id: _, nickname: _ } => {
+        WsMessage::UserJoined { user_id, nickname } => {
+            tracing::info!("User {} has been join.", user_id);
             let sender = msg.sender.expect("UserJoined message must have a sender");
 
             if banned_users.contains(&msg.user_id) {

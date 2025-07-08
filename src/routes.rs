@@ -42,6 +42,7 @@ pub async fn ws_handler(
     Query(query): Query<WsConnectQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+  tracing::debug!("ws_handler");
     // 负载保护检查
     if state.total_connections.load(Ordering::Relaxed) >= state.config.max_connections {
         return AppError::ServiceUnavailable("服务器连接数已达上限".to_string()).into_response();

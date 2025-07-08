@@ -69,10 +69,10 @@ export default function (data) {
       );
 
       // 1.2 设置一个定时器，每10秒发送一次心跳
-      // socket.setInterval(function timeout() {
-      //   socket.send(JSON.stringify({ type: 'ping' }));
-      //   console.log(`VU ${__VU}: Pinging...`);
-      // }, 10000); // 10秒
+      socket.setInterval(function timeout() {
+        socket.send(JSON.stringify({ type: 'Ping' }));
+        console.log(`VU ${__VU}: Pinging...`);
+      }, 10000); // 10秒
 
       // 1.3 设置一个定时器，模拟用户随机发送聊天消息
       socket.setInterval(function sendMessage() {
@@ -89,13 +89,13 @@ export default function (data) {
     socket.on('message', function (data) {
       const msg = JSON.parse(data);
       // 检查收到的消息是否是pong或广播消息
-      // if (msg.type === 'pong') {
-      //   console.log(`VU ${__VU}: Received pong`);
-      // } else {
+      if (msg.type === 'Pong') {
+        console.log(`VU ${__VU}: Received pong`);
+      } else {
         console.log(
           `VU ${__VU}: Received broadcast message: ${msg.payload.content}`
         );
-      // }
+      }
       // 可以用 check 来验证消息内容
       check(data, {
         'message is not empty': (d) => d.length > 0,
