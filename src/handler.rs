@@ -103,19 +103,34 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uui
         return;
     }
 
+    let ws_sender = Arc::new(tokio::sync::Mutex::new(ws_sender));
+
+    // tokio::spawn 发送消息部分也要用 Arc clone
+    let ws_sender_clone = ws_sender.clone();
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             let text_msg = serde_json::to_string(&msg).unwrap();
-            if ws_sender.send(axum::extract::ws::Message::Text(text_msg)).await.is_err() { break; }
+            let mut sender = ws_sender_clone.lock().await;
+            if sender.send(axum::extract::ws::Message::Text(text_msg)).await.is_err() { break; }
         }
     });
 
     while let Some(Ok(msg)) = ws_receiver.next().await {
         if let Ok(ws_msg) = WsMessage::try_from(msg) {
-            if room_tx.send(InternalMessage {
-                conn_id, user_id: user_id.clone(), nickname: nickname.clone(), room_id,
-                content: ws_msg, sender: None,
-            }).await.is_err() { break; }
+            match ws_msg {
+                WsMessage::Ping { timestamp } => {
+                    let pong = WsMessage::Pong { timestamp };
+                    let text_msg = serde_json::to_string(&pong).unwrap();
+                    let mut sender = ws_sender.lock().await;
+                    let _ = sender.send(axum::extract::ws::Message::Text(text_msg)).await;
+                },
+                _ => {
+                    if room_tx.send(InternalMessage {
+                        conn_id, user_id: user_id.clone(), nickname: nickname.clone(), room_id,
+                        content: ws_msg, sender: None,
+                    }).await.is_err() { break; }
+                }
+            }
         }
     }
 

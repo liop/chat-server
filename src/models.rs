@@ -27,6 +27,8 @@ pub enum WsMessage {
     WelcomeInfo { user_id: String, nickname: String, is_muted: bool },
     RoomStats { current_users: u32, peak_users: u32 },
     CustomEvent { event_type: String, payload: Value },
+    Ping { timestamp: Option<i64> },
+    Pong { timestamp: Option<i64> },
 }
 
 // 房间内部状态
