@@ -14,6 +14,7 @@ use uuid::Uuid;
 #[derive(FromRow, Serialize, Debug)]
 pub struct ChatHistoryEntry {
     pub user_id: String,
+    pub nickname: String,
     pub content: String,
     pub created_at: i64,
 }
@@ -21,6 +22,7 @@ pub struct ChatHistoryEntry {
 #[derive(FromRow, Serialize, Debug)]
 pub struct SessionHistoryEntry {
     pub user_id: String,
+    pub nickname: String,
     pub join_time: i64,
     pub leave_time: i64,
     pub duration_seconds: i64,
@@ -40,8 +42,8 @@ pub async fn migrate(pool: &SqlitePool) -> Result<(), AppError> {
         PRAGMA synchronous = NORMAL;
         CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS room_admins (room_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (room_id, user_id));
-        CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, user_id TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS room_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, user_id TEXT NOT NULL, join_time INTEGER NOT NULL, leave_time INTEGER, duration_seconds INTEGER);
+        CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, user_id TEXT NOT NULL, nickname TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS room_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, user_id TEXT NOT NULL, nickname TEXT NOT NULL, join_time INTEGER NOT NULL, leave_time INTEGER, duration_seconds INTEGER);
         CREATE TABLE IF NOT EXISTS room_bans (room_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (room_id, user_id));
         
         -- 添加索引以提高查询性能
@@ -82,20 +84,20 @@ async fn write_batch(pool: &SqlitePool, commands: &[DbWriteCommand]) -> Result<(
     let mut tx = pool.begin().await?;
     for cmd in commands {
         match cmd {
-            DbWriteCommand::UserJoined { user_id, room_id } => {
-                sqlx::query("INSERT INTO room_sessions (room_id, user_id, join_time) VALUES (?, ?, ?)")
-                    .bind(room_id.to_string()).bind(user_id).bind(chrono::Utc::now().timestamp())
+            DbWriteCommand::UserJoined { user_id, nickname, room_id } => {
+                sqlx::query("INSERT INTO room_sessions (room_id, user_id, nickname, join_time) VALUES (?, ?, ?, ?)")
+                    .bind(room_id.to_string()).bind(user_id).bind(nickname).bind(chrono::Utc::now().timestamp())
                     .execute(&mut *tx).await?;
             }
-            DbWriteCommand::UserLeft { user_id, room_id, join_time } => {
+            DbWriteCommand::UserLeft { user_id, nickname, room_id, join_time } => {
                 let duration = join_time.elapsed().as_secs() as i64;
                 sqlx::query("UPDATE room_sessions SET leave_time = ?, duration_seconds = ? WHERE user_id = ? AND room_id = ? AND leave_time IS NULL")
                     .bind(chrono::Utc::now().timestamp()).bind(duration).bind(user_id).bind(room_id.to_string())
                     .execute(&mut *tx).await?;
             }
-            DbWriteCommand::ChatMessage { user_id, room_id, content } => {
-                sqlx::query("INSERT INTO chat_history (room_id, user_id, content, created_at) VALUES (?, ?, ?, ?)")
-                    .bind(room_id.to_string()).bind(user_id).bind(content).bind(chrono::Utc::now().timestamp())
+            DbWriteCommand::ChatMessage { user_id, nickname, room_id, content } => {
+                sqlx::query("INSERT INTO chat_history (room_id, user_id, nickname, content, created_at) VALUES (?, ?, ?, ?, ?)")
+                    .bind(room_id.to_string()).bind(user_id).bind(nickname).bind(content).bind(chrono::Utc::now().timestamp())
                     .execute(&mut *tx).await?;
             }
             DbWriteCommand::BanUser { user_id, room_id } => {
@@ -213,7 +215,7 @@ pub async fn get_chat_history_page(
     
     // 获取分页数据
     let data_query = format!(
-        "SELECT user_id, content, created_at FROM chat_history WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "SELECT user_id, nickname, content, created_at FROM chat_history WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
         where_clause
     );
     let mut data_stmt = sqlx::query_as::<_, ChatHistoryEntry>(&data_query);
@@ -277,7 +279,7 @@ pub async fn get_session_history_page(
     
     // 获取分页数据
     let data_query = format!(
-        "SELECT user_id, join_time, leave_time, duration_seconds FROM room_sessions WHERE {} ORDER BY join_time DESC LIMIT ? OFFSET ?",
+        "SELECT user_id, nickname, join_time, leave_time, duration_seconds FROM room_sessions WHERE {} ORDER BY join_time DESC LIMIT ? OFFSET ?",
         where_clause
     );
     let mut data_stmt = sqlx::query_as::<_, SessionHistoryEntry>(&data_query);
@@ -307,8 +309,8 @@ pub async fn get_session_history_page(
 // 为数据同步获取数据（保持向后兼容）
 pub async fn get_data_for_sync(pool: &SqlitePool, room_id: Uuid, details: RoomDetailsResponse) -> Result<DataSyncPayload, AppError> {
     let room_id_str = room_id.to_string();
-    let chat_history = sqlx::query_as("SELECT user_id, content, created_at FROM chat_history WHERE room_id = ?").bind(&room_id_str).fetch_all(pool).await?;
-    let session_history = sqlx::query_as("SELECT user_id, join_time, leave_time, duration_seconds FROM room_sessions WHERE room_id = ? AND leave_time IS NOT NULL").bind(&room_id_str).fetch_all(pool).await?;
+    let chat_history = sqlx::query_as("SELECT user_id, nickname, content, created_at FROM chat_history WHERE room_id = ?").bind(&room_id_str).fetch_all(pool).await?;
+    let session_history = sqlx::query_as("SELECT user_id, nickname, join_time, leave_time, duration_seconds FROM room_sessions WHERE room_id = ? AND leave_time IS NOT NULL").bind(&room_id_str).fetch_all(pool).await?;
 
     Ok(DataSyncPayload {
         room_id: details.room_id,

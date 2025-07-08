@@ -20,6 +20,7 @@ struct ConnectionInfo {
     sender: mpsc::Sender<WsMessage>,
     join_time: Instant,
     is_admin: bool,
+    nickname: String,
 }
 
 // RAII Guard for connection counting
@@ -71,7 +72,7 @@ pub async fn start_room_handler(room_id: Uuid, state: Arc<AppState>) {
 }
 
 // 处理单个WebSocket连接
-pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uuid, user_id: String) {
+pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uuid, user_id: String, nickname: String) {
     let _conn_guard = ConnectionGuard::new(state.total_connections.clone());
     let conn_id = Uuid::new_v4();
     let (mut ws_sender, mut ws_receiver) = socket.split();
@@ -91,8 +92,8 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uui
     let (tx, mut rx) = mpsc::channel(10);
 
     if room_tx.send(InternalMessage {
-        conn_id, user_id: user_id.clone(), room_id,
-        content: WsMessage::UserJoined { user_id: user_id.clone() },
+        conn_id, user_id: user_id.clone(), nickname: nickname.clone(), room_id,
+        content: WsMessage::UserJoined { user_id: user_id.clone(), nickname: nickname.clone() },
         sender: Some(tx.clone()),
     }).await.is_err() {
         tracing::warn!("Failed to register new user, room handler might be down.");
@@ -109,15 +110,15 @@ pub async fn handle_socket(socket: WebSocket, state: Arc<AppState>, room_id: Uui
     while let Some(Ok(msg)) = ws_receiver.next().await {
         if let Ok(ws_msg) = WsMessage::try_from(msg) {
             if room_tx.send(InternalMessage {
-                conn_id, user_id: user_id.clone(), room_id,
+                conn_id, user_id: user_id.clone(), nickname: nickname.clone(), room_id,
                 content: ws_msg, sender: None,
             }).await.is_err() { break; }
         }
     }
 
     let _ = room_tx.send(InternalMessage {
-        conn_id, user_id: user_id.clone(), room_id,
-        content: WsMessage::UserLeft { user_id }, sender: None,
+        conn_id, user_id: user_id.clone(), nickname: nickname.clone(), room_id,
+        content: WsMessage::UserLeft { user_id: user_id.clone(), nickname: nickname.clone() }, sender: None,
     }).await;
 }
 
@@ -194,7 +195,7 @@ async fn handle_message(
     let Some(db_writer_tx) = db_writer_tx else { return; };
 
     match msg.content {
-        WsMessage::UserJoined { .. } => {
+        WsMessage::UserJoined { ref user_id, ref nickname } => {
             let sender = msg.sender.expect("UserJoined message must have a sender");
 
             if banned_users.contains(&msg.user_id) {
@@ -211,10 +212,10 @@ async fn handle_message(
             
             let is_admin = admin_users.contains(&msg.user_id);
             let is_muted = muted_users.contains(&msg.user_id);
-            let welcome_msg = WsMessage::WelcomeInfo { user_id: msg.user_id.clone(), is_muted };
+            let welcome_msg = WsMessage::WelcomeInfo { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), is_muted };
             if sender.send(welcome_msg).await.is_err() { return; }
 
-            let conn_info = ConnectionInfo { sender, join_time: Instant::now(), is_admin };
+            let conn_info = ConnectionInfo { sender, join_time: Instant::now(), is_admin, nickname: msg.nickname.clone() };
             connections.insert(msg.conn_id, conn_info);
             user_id_to_conn_id.insert(msg.user_id.clone(), msg.conn_id);
 
@@ -224,27 +225,25 @@ async fn handle_message(
                 stats.peak_users = stats.current_users;
             }
 
-            let _ = db_writer_tx.send(DbWriteCommand::UserJoined { user_id: msg.user_id.clone(), room_id: msg.room_id }).await;
-            broadcast(connections, WsMessage::UserJoined { user_id: msg.user_id }, Some(msg.conn_id)).await;
+            let _ = db_writer_tx.send(DbWriteCommand::UserJoined { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id }).await;
+            broadcast(connections, WsMessage::UserJoined { user_id: msg.user_id, nickname: msg.nickname }, Some(msg.conn_id)).await;
         }
-        WsMessage::UserLeft { .. } => {
+        WsMessage::UserLeft { ref user_id, ref nickname } => {
             if let Some(conn_info) = connections.remove(&msg.conn_id) {
                 user_id_to_conn_id.remove(&msg.user_id);
                 stats.current_users = stats.current_users.saturating_sub(1);
-                let _ = db_writer_tx.send(DbWriteCommand::UserLeft { 
-                    user_id: msg.user_id.clone(), room_id: msg.room_id, join_time: conn_info.join_time 
-                }).await;
-                broadcast(connections, WsMessage::UserLeft { user_id: msg.user_id }, None).await;
+                let _ = db_writer_tx.send(DbWriteCommand::UserLeft { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id, join_time: conn_info.join_time }).await;
+                broadcast(connections, WsMessage::UserLeft { user_id: msg.user_id, nickname: msg.nickname }, None).await;
             }
         }
-        WsMessage::SendMessage { content } => {
+        WsMessage::SendMessage { ref content } => {
             let conn_info = if let Some(info) = connections.get(&msg.conn_id) { info } else { return; };
             if muted_users.contains(&msg.user_id) {
                 let _ = conn_info.sender.send(WsMessage::YouAreMuted).await;
                 return;
             }
-            let _ = db_writer_tx.send(DbWriteCommand::ChatMessage { user_id: msg.user_id.clone(), room_id: msg.room_id, content: content.clone() }).await;
-            broadcast(connections, WsMessage::Message { from: msg.user_id, content, is_admin: conn_info.is_admin }, None).await;
+            let _ = db_writer_tx.send(DbWriteCommand::ChatMessage { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id, content: content.clone() }).await;
+            broadcast(connections, WsMessage::Message { from: msg.user_id, nickname: msg.nickname, content: content.clone(), is_admin: conn_info.is_admin }, None).await;
         }
         WsMessage::KickUser { user_id } => {
             let conn_info = if let Some(info) = connections.get(&msg.conn_id) { info } else { return; };

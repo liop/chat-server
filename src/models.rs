@@ -15,15 +15,15 @@ pub enum WsMessage {
     SendMessage { content: String },
     KickUser { user_id: String },
     MuteUser { user_id: String },
-    Message { from: String, content: String, is_admin: bool },
-    UserJoined { user_id: String },
-    UserLeft { user_id: String },
+    Message { from: String, nickname: String, content: String, is_admin: bool },
+    UserJoined { user_id: String, nickname: String },
+    UserLeft { user_id: String, nickname: String },
     YouAreKicked,
     YouAreMuted,
     UserMuted { user_id: String },
     Error { message: String },
     System { message: String },
-    WelcomeInfo { user_id: String, is_muted: bool },
+    WelcomeInfo { user_id: String, nickname: String, is_muted: bool },
 }
 
 // 房间内部状态
@@ -54,6 +54,7 @@ pub struct StatsQuery {
 pub struct InternalMessage {
     pub conn_id: Uuid,
     pub user_id: String,
+    pub nickname: String,
     pub room_id: Uuid,
     pub content: WsMessage,
     pub sender: Option<mpsc::Sender<WsMessage>>,
@@ -62,9 +63,9 @@ pub struct InternalMessage {
 // 数据库写入命令
 #[derive(Debug)]
 pub enum DbWriteCommand {
-    UserJoined { user_id: String, room_id: Uuid },
-    UserLeft { user_id: String, room_id: Uuid, join_time: std::time::Instant },
-    ChatMessage { user_id: String, room_id: Uuid, content: String },
+    UserJoined { user_id: String, nickname: String, room_id: Uuid },
+    UserLeft { user_id: String, nickname: String, room_id: Uuid, join_time: std::time::Instant },
+    ChatMessage { user_id: String, nickname: String, room_id: Uuid, content: String },
     BanUser { user_id: String, room_id: Uuid },
     UnbanUser { user_id: String, room_id: Uuid },
 }

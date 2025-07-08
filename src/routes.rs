@@ -33,6 +33,7 @@ pub async fn health_check() -> impl IntoResponse {
 #[derive(Deserialize)]
 pub struct WsConnectQuery {
     user_id: String,
+    nickname: String,
 }
 
 pub async fn ws_handler(
@@ -53,7 +54,7 @@ pub async fn ws_handler(
 
     // 升级连接
     ws.on_upgrade(move |socket| async move {
-        handler::handle_socket(socket, state, room_id, query.user_id).await
+        handler::handle_socket(socket, state, room_id, query.user_id, query.nickname).await
     })
 }
 
