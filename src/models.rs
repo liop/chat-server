@@ -24,6 +24,7 @@ pub enum WsMessage {
     Error { message: String },
     System { message: String },
     WelcomeInfo { user_id: String, nickname: String, is_muted: bool },
+    RoomStats { current_users: u32, peak_users: u32 },
 }
 
 // 房间内部状态

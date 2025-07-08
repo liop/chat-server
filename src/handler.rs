@@ -171,6 +171,8 @@ pub async fn room_message_loop(
             },
             else => {
                 tracing::info!("Room {} handler shutting down.", room_id);
+                // 广播当前房间人数
+                broadcast(&connections, WsMessage::RoomStats { current_users: stats.current_users, peak_users: stats.peak_users }, None).await;
                 break;
             }
         }
@@ -226,14 +228,12 @@ async fn handle_message(
             }
 
             let _ = db_writer_tx.send(DbWriteCommand::UserJoined { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id }).await;
-            broadcast(connections, WsMessage::UserJoined { user_id: msg.user_id, nickname: msg.nickname }, Some(msg.conn_id)).await;
         }
         WsMessage::UserLeft { ref user_id, ref nickname } => {
             if let Some(conn_info) = connections.remove(&msg.conn_id) {
                 user_id_to_conn_id.remove(&msg.user_id);
                 stats.current_users = stats.current_users.saturating_sub(1);
                 let _ = db_writer_tx.send(DbWriteCommand::UserLeft { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id, join_time: conn_info.join_time }).await;
-                broadcast(connections, WsMessage::UserLeft { user_id: msg.user_id, nickname: msg.nickname }, None).await;
             }
         }
         WsMessage::SendMessage { ref content } => {
@@ -258,13 +258,11 @@ async fn handle_message(
                     let _ = target_conn.sender.send(WsMessage::YouAreKicked).await;
                 }
             }
-            broadcast(connections, WsMessage::System { message: format!("用户 {} 已被踢出房间", user_id) }, None).await;
         }
         WsMessage::MuteUser { user_id } => {
             let conn_info = if let Some(info) = connections.get(&msg.conn_id) { info } else { return; };
             if !conn_info.is_admin { return; }
             muted_users.insert(user_id.clone());
-            broadcast(connections, WsMessage::UserMuted { user_id }, None).await;
         }
         _ => {}
     }
