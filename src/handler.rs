@@ -172,17 +172,21 @@ pub async fn room_message_loop(
                 let _ = query.response_tx.send(response);
             },
             else => {
-                // 低优先级消息分片处理
+                // 分片处理部分修正如下：
                 let mut count = 0;
                 loop {
                     // 先检查高优先级队列是否有消息
-                    if let Ok(Some(msg)) = high_prio_rx.try_recv() {
-                        handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
-                        break; // 让出分片，回到tokio::select!
+                    match high_prio_rx.try_recv() {
+                        Ok(msg) => {
+                            handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
+                            break; // 让出分片，回到tokio::select!
+                        },
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {},
+                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
                     }
                     // 处理一条低优先级消息
                     match normal_prio_rx.try_recv() {
-                        Ok(Some(msg)) => {
+                        Ok(msg) => {
                             handle_message(msg, &mut connections, &mut user_id_to_conn_id, &mut muted_users, &mut banned_users, &admin_users, &state, &mut stats).await;
                             count += 1;
                             if count >= LOW_PRIO_SLICE {
@@ -190,10 +194,8 @@ pub async fn room_message_loop(
                                 break;
                             }
                         },
-                        Ok(None) | Err(_) => {
-                            // 没有低优先级消息，进入下一轮select
-                            break;
-                        }
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => { break; },
+                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => { break; },
                     }
                 }
                 // 如果房间即将关闭，广播当前房间人数
@@ -225,7 +227,7 @@ async fn handle_message(
     let Some(db_writer_tx) = db_writer_tx else { return; };
 
     match msg.content {
-        WsMessage::UserJoined { ref user_id, ref nickname } => {
+        WsMessage::UserJoined { user_id: _, nickname: _ } => {
             let sender = msg.sender.expect("UserJoined message must have a sender");
 
             if banned_users.contains(&msg.user_id) {
@@ -257,7 +259,7 @@ async fn handle_message(
 
             let _ = db_writer_tx.send(DbWriteCommand::UserJoined { user_id: msg.user_id.clone(), nickname: msg.nickname.clone(), room_id: msg.room_id }).await;
         }
-        WsMessage::UserLeft { ref user_id, ref nickname } => {
+        WsMessage::UserLeft { user_id: _, nickname: _ } => {
             if let Some(conn_info) = connections.remove(&msg.conn_id) {
                 user_id_to_conn_id.remove(&msg.user_id);
                 stats.current_users = stats.current_users.saturating_sub(1);
@@ -312,6 +314,11 @@ async fn handle_message(
             let conn_info = if let Some(info) = connections.get(&msg.conn_id) { info } else { return; };
             if !conn_info.is_admin { return; }
             muted_users.insert(user_id.clone());
+        }
+        WsMessage::CustomEvent { ref event_type, ref payload } => {
+            let conn_info = if let Some(info) = connections.get(&msg.conn_id) { info } else { return; };
+            if !conn_info.is_admin { return; } // 只有管理员可发
+            broadcast(connections, WsMessage::CustomEvent { event_type: event_type.clone(), payload: payload.clone() }, None).await;
         }
         _ => {}
     }

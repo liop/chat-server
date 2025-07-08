@@ -7,6 +7,7 @@ use std::collections::{HashSet, HashMap};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use crate::db;
+use serde_json::Value;
 
 // WebSocket消息模型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +26,7 @@ pub enum WsMessage {
     System { message: String },
     WelcomeInfo { user_id: String, nickname: String, is_muted: bool },
     RoomStats { current_users: u32, peak_users: u32 },
+    CustomEvent { event_type: String, payload: Value },
 }
 
 // 房间内部状态

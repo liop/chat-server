@@ -89,7 +89,7 @@ async fn write_batch(pool: &SqlitePool, commands: &[DbWriteCommand]) -> Result<(
                     .bind(room_id.to_string()).bind(user_id).bind(nickname).bind(chrono::Utc::now().timestamp())
                     .execute(&mut *tx).await?;
             }
-            DbWriteCommand::UserLeft { user_id, nickname, room_id, join_time } => {
+            DbWriteCommand::UserLeft { user_id, nickname: _, room_id, join_time } => {
                 let duration = join_time.elapsed().as_secs() as i64;
                 sqlx::query("UPDATE room_sessions SET leave_time = ?, duration_seconds = ? WHERE user_id = ? AND room_id = ? AND leave_time IS NULL")
                     .bind(chrono::Utc::now().timestamp()).bind(duration).bind(user_id).bind(room_id.to_string())
@@ -186,7 +186,7 @@ pub async fn get_chat_history_page(
 ) -> Result<ChatHistoryPage, AppError> {
     let room_id_str = room_id.to_string();
     let page = query.page.unwrap_or(1);
-    let limit = query.limit.unwrap_or(1000).min(10000); // 最大10000条
+    let limit = query.limit.unwrap_or(10000).min(10000); // 最大10000条
     let offset = (page - 1) * limit;
     
     // 构建WHERE条件
