@@ -12,8 +12,8 @@ const RoomDetail: React.FC<RoomDetailProps> = ({ room }) => {
       <h2>{room.room_name}</h2>
       <div>房间ID: {room.room_id}</div>
       <div>管理员: {room.admin_user_ids.join(', ')}</div>
-      <div>当前在线人数: {room.current_connections}</div>
-      <div>创建时间: {new Date(room.created_at * 1000).toLocaleString()}</div>
+      <div>当前在线人数: {room.current_users}</div>
+      <div>创建时间: {new Date(room.start_time * 1000).toLocaleString()}</div>
       <div>最后活跃: {new Date(room.last_activity * 1000).toLocaleString()}</div>
     </div>
   );

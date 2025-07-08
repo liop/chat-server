@@ -3,9 +3,9 @@
 // src/db.rs - 数据库交互
 // ====================================================================================
 use crate::error::AppError;
-use crate::models::{DataSyncPayload, DbWriteCommand, RoomDetailsResponse, RoomBasicInfo, ChatHistoryPage, SessionHistoryPage, PaginationInfo, PaginationQuery};
+use crate::models::{DataSyncPayload, DbWriteCommand, RoomDetailsResponse, RoomBasicInfo};
 use serde::Serialize;
-use sqlx::{FromRow, SqlitePool, Row};
+use sqlx::{FromRow, SqlitePool};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -134,11 +134,6 @@ pub async fn load_admins_for_room(pool: &SqlitePool, room_id: Uuid) -> Result<Ha
     Ok(rows.into_iter().map(|(user_id,)| user_id).collect())
 }
 
-// 获取所有房间的基础信息
-pub async fn get_all_room_info(pool: &SqlitePool) -> Result<Vec<RoomInfo>, AppError> {
-    sqlx::query_as("SELECT id, created_at FROM rooms").fetch_all(pool).await.map_err(Into::into)
-}
-
 // 获取房间基础信息
 pub async fn get_room_basic_info(pool: &SqlitePool, room_id: Uuid) -> Result<Option<RoomBasicInfo>, AppError> {
     let room_id_str = room_id.to_string();
@@ -177,135 +172,7 @@ pub async fn get_room_basic_info(pool: &SqlitePool, room_id: Uuid) -> Result<Opt
         Ok(None)
     }
 }
-
-// 分页获取聊天记录
-pub async fn get_chat_history_page(
-    pool: &SqlitePool, 
-    room_id: Uuid, 
-    query: &PaginationQuery
-) -> Result<ChatHistoryPage, AppError> {
-    let room_id_str = room_id.to_string();
-    let page = query.page.unwrap_or(1);
-    let limit = query.limit.unwrap_or(10000).min(10000); // 最大10000条
-    let offset = (page - 1) * limit;
-    
-    // 构建WHERE条件
-    let mut where_conditions = vec!["room_id = ?"];
-    let mut params: Vec<String> = vec![room_id_str.clone()];
-    
-    if let Some(from_time) = query.from {
-        where_conditions.push("created_at >= ?");
-        params.push(from_time.to_string());
-    }
-    
-    if let Some(to_time) = query.to {
-        where_conditions.push("created_at <= ?");
-        params.push(to_time.to_string());
-    }
-    
-    let where_clause = where_conditions.join(" AND ");
-    
-    // 获取总记录数
-    let count_query = format!("SELECT COUNT(*) FROM chat_history WHERE {}", where_clause);
-    let mut count_stmt = sqlx::query(&count_query);
-    for param in &params {
-        count_stmt = count_stmt.bind(param);
-    }
-    let total_records: i64 = count_stmt.fetch_one(pool).await?.try_get(0)?;
-    
-    // 获取分页数据
-    let data_query = format!(
-        "SELECT user_id, nickname, content, created_at FROM chat_history WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        where_clause
-    );
-    let mut data_stmt = sqlx::query_as::<_, ChatHistoryEntry>(&data_query);
-    for param in &params {
-        data_stmt = data_stmt.bind(param);
-    }
-    data_stmt = data_stmt.bind(limit as i64).bind(offset as i64);
-    
-    let records = data_stmt.fetch_all(pool).await?;
-    
-    let total_pages = ((total_records as f64) / (limit as f64)).ceil() as u32;
-    
-    Ok(ChatHistoryPage {
-        room_id,
-        records,
-        pagination: PaginationInfo {
-            current_page: page,
-            total_pages,
-            total_records: total_records as u64,
-            page_size: limit,
-            has_next: page < total_pages,
-            has_prev: page > 1,
-        },
-    })
-}
-
-// 分页获取会话历史
-pub async fn get_session_history_page(
-    pool: &SqlitePool, 
-    room_id: Uuid, 
-    query: &PaginationQuery
-) -> Result<SessionHistoryPage, AppError> {
-    let room_id_str = room_id.to_string();
-    let page = query.page.unwrap_or(1);
-    let limit = query.limit.unwrap_or(500).min(5000); // 最大5000条
-    let offset = (page - 1) * limit;
-    
-    // 构建WHERE条件
-    let mut where_conditions = vec!["room_id = ?", "leave_time IS NOT NULL"];
-    let mut params: Vec<String> = vec![room_id_str.clone()];
-    
-    if let Some(from_time) = query.from {
-        where_conditions.push("join_time >= ?");
-        params.push(from_time.to_string());
-    }
-    
-    if let Some(to_time) = query.to {
-        where_conditions.push("join_time <= ?");
-        params.push(to_time.to_string());
-    }
-    
-    let where_clause = where_conditions.join(" AND ");
-    
-    // 获取总记录数
-    let count_query = format!("SELECT COUNT(*) FROM room_sessions WHERE {}", where_clause);
-    let mut count_stmt = sqlx::query(&count_query);
-    for param in &params {
-        count_stmt = count_stmt.bind(param);
-    }
-    let total_records: i64 = count_stmt.fetch_one(pool).await?.try_get(0)?;
-    
-    // 获取分页数据
-    let data_query = format!(
-        "SELECT user_id, nickname, join_time, leave_time, duration_seconds FROM room_sessions WHERE {} ORDER BY join_time DESC LIMIT ? OFFSET ?",
-        where_clause
-    );
-    let mut data_stmt = sqlx::query_as::<_, SessionHistoryEntry>(&data_query);
-    for param in &params {
-        data_stmt = data_stmt.bind(param);
-    }
-    data_stmt = data_stmt.bind(limit as i64).bind(offset as i64);
-    
-    let records = data_stmt.fetch_all(pool).await?;
-    
-    let total_pages = ((total_records as f64) / (limit as f64)).ceil() as u32;
-    
-    Ok(SessionHistoryPage {
-        room_id,
-        records,
-        pagination: PaginationInfo {
-            current_page: page,
-            total_pages,
-            total_records: total_records as u64,
-            page_size: limit,
-            has_next: page < total_pages,
-            has_prev: page > 1,
-        },
-    })
-}
-
+ 
 // 为数据同步获取数据（保持向后兼容）
 pub async fn get_data_for_sync(pool: &SqlitePool, room_id: Uuid, details: RoomDetailsResponse) -> Result<DataSyncPayload, AppError> {
     let room_id_str = room_id.to_string();

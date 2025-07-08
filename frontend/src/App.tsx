@@ -78,6 +78,11 @@ const App: React.FC = () => {
         {loading && <div style={{ padding: 24 }}>加载中...</div>}
         {error && <div style={{ color: 'red', padding: 24 }}>{error}</div>}
         <RoomDetail room={selectedRoom} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 300 }}>
+
+          {selectedRoom?.chat_history}
+
+        </div>
         {selectedRoom && <MessageSender onSend={handleSend} />}
       </div>
     </div>

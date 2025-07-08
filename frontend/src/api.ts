@@ -6,8 +6,8 @@ export interface RoomBasicInfo {
   room_id: string;
   room_name: string;
   admin_user_ids: string[];
-  current_connections: number;
-  created_at: number;
+  current_users: number;
+  start_time: number;
   last_activity: number;
 }
 

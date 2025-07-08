@@ -94,27 +94,7 @@ impl CallbackService {
         self.send_room_event(event).await;
     }
 
-    // 发送用户加入事件
-    pub async fn send_user_joined(&self, room_id: Uuid, user_id: String) {
-        let event = CallbackEvent::UserJoined {
-            room_id,
-            user_id,
-            timestamp: chrono::Utc::now().timestamp(),
-        };
-        self.send_room_event(event).await;
-    }
-
-    // 发送用户离开事件
-    pub async fn send_user_left(&self, room_id: Uuid, user_id: String, duration: i64) {
-        let event = CallbackEvent::UserLeft {
-            room_id,
-            user_id,
-            duration,
-            timestamp: chrono::Utc::now().timestamp(),
-        };
-        self.send_room_event(event).await;
-    }
-
+     
     // 带重试机制的回调发送
     async fn send_callback_with_retry(&self, url: &str, event: &CallbackEvent) {
         let mut retries = 0;
@@ -143,93 +123,5 @@ impl CallbackService {
         }
 
         tracing::error!("回调发送最终失败，URL: {}，事件: {:?}", url, event);
-    }
-
-    // 批量发送聊天记录
-    pub async fn send_chat_history_in_batches(&self, pool: &sqlx::SqlitePool, room_id: Uuid) {
-        let batch_size = self.config.chat_history_batch_size;
-        let mut page = 1;
-        let mut total_sent = 0;
-
-        loop {
-            let query = crate::models::PaginationQuery {
-                page: Some(page),
-                limit: Some(batch_size),
-                from: None,
-                to: None,
-            };
-
-            match db::get_chat_history_page(pool, room_id, &query).await {
-                Ok(chat_page) => {
-                    let is_last_batch = !chat_page.pagination.has_next;
-                    let batch_id = format!("chat_{}_{}", room_id, page);
-                    let records_len = chat_page.records.len();
-                    
-                    self.send_chat_history_batch(
-                        room_id,
-                        chat_page.records,
-                        batch_id,
-                        is_last_batch,
-                    ).await;
-
-                    total_sent += records_len;
-                    
-                    if is_last_batch {
-                        tracing::info!("完成聊天记录批量发送，房间: {}，总记录数: {}", room_id, total_sent);
-                        break;
-                    }
-                    
-                    page += 1;
-                }
-                Err(e) => {
-                    tracing::error!("获取聊天记录分页失败: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
-    // 批量发送会话历史
-    pub async fn send_session_history_in_batches(&self, pool: &sqlx::SqlitePool, room_id: Uuid) {
-        let batch_size = self.config.session_history_batch_size;
-        let mut page = 1;
-        let mut total_sent = 0;
-
-        loop {
-            let query = crate::models::PaginationQuery {
-                page: Some(page),
-                limit: Some(batch_size),
-                from: None,
-                to: None,
-            };
-
-            match db::get_session_history_page(pool, room_id, &query).await {
-                Ok(session_page) => {
-                    let is_last_batch = !session_page.pagination.has_next;
-                    let batch_id = format!("session_{}_{}", room_id, page);
-                    let records_len = session_page.records.len();
-                    
-                    self.send_session_history_batch(
-                        room_id,
-                        session_page.records,
-                        batch_id,
-                        is_last_batch,
-                    ).await;
-
-                    total_sent += records_len;
-                    
-                    if is_last_batch {
-                        tracing::info!("完成会话历史批量发送，房间: {}，总记录数: {}", room_id, total_sent);
-                        break;
-                    }
-                    
-                    page += 1;
-                }
-                Err(e) => {
-                    tracing::error!("获取会话历史分页失败: {}", e);
-                    break;
-                }
-            }
-        }
-    }
+    }     
 } 

@@ -53,7 +53,7 @@ const RoomList: React.FC<RoomListProps> = ({ rooms, selectedRoomId, onSelect, on
             onClick={() => onSelect(room.room_id)}
           >
             <div><b>{room.room_name}</b></div>
-            <div style={{ fontSize: 12, color: '#888' }}>在线人数: {room.current_connections}</div>
+            <div style={{ fontSize: 12, color: '#888' }}>在线人数: {room.current_users}</div>
             <div style={{ fontSize: 12, color: '#888' }}>管理员: {room.admin_user_ids.join(', ')}</div>
           </li>
         ))}
