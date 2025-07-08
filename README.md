@@ -13,6 +13,9 @@
 - 💾 数据持久化（可选）
 - 🔄 智能数据同步策略
 - 📤 拆分式回调系统
+- ⏱️ 消息频率限制与截流（普通用户发言限流，用户加入通知1秒合并推送）
+- 🛡️ 高优先级/低优先级消息分片调度，保证系统响应性
+- 🧩 管理员自定义事件（如福袋、红包）高优先级推送
 
 ## 快速开始
 
@@ -53,6 +56,9 @@ CALLBACK_TIMEOUT_SECONDS=30
 
 # 数据同步配置
 SYNC_INTERVAL_SECONDS=300  # 定时同步间隔（秒），默认5分钟
+
+# 普通用户发言最小间隔（秒），默认3秒
+USER_MESSAGE_INTERVAL_SECS=3
 ```
 
 ### 运行服务器
@@ -92,7 +98,7 @@ curl -X GET http://localhost:3000/management/rooms \
 ### WebSocket 连接
 
 ```
-ws://localhost:3000/ws/rooms/{room_id}?user_id={user_id}
+ws://localhost:3000/ws/rooms/{room_id}?user_id={user_id}&nickname={nickname}
 ```
 
 ### 数据同步接口
@@ -231,6 +237,45 @@ CALLBACK_MAX_RETRIES=3
 CALLBACK_RETRY_DELAY_SECONDS=5
 CALLBACK_TIMEOUT_SECONDS=30
 ```
+
+## WebSocket 协议说明
+
+- 连接示例：
+  ```
+  ws://localhost:3000/ws/rooms/{room_id}?user_id={user_id}&nickname={nickname}
+  ```
+- 用户加入/发送消息时需带user_id和nickname。
+- 管理员可通过高优先级通道发送自定义事件（CustomEvent），如福袋、红包。
+
+### WsMessage 主要类型示例
+
+```json
+// 普通文本消息
+{"type": "Message", "payload": {"from": "user1", "nickname": "张三", "content": "hello", "is_admin": false}}
+
+// 用户加入
+{"type": "UserJoined", "payload": {"user_id": "user2", "nickname": "李四"}}
+
+// 用户离开
+{"type": "UserLeft", "payload": {"user_id": "user2", "nickname": "李四"}}
+
+// 当前房间人数（用于加入/离开截流推送）
+{"type": "RoomStats", "payload": {"current_users": 123, "peak_users": 200}}
+
+// 管理员自定义事件（如福袋、红包）
+{"type": "CustomEvent", "payload": {"event_type": "lucky_money", "payload": {"amount": 100, "desc": "新年快乐"}}}
+```
+
+## 消息频率限制与截流
+
+- 普通用户发言有频率限制，默认每3秒只能发一次（可通过USER_MESSAGE_INTERVAL_SECS配置）。
+- 管理员不受此限制。
+- 用户加入房间时，加入通知会进行截流：1秒内多次加入只推送一次，推送内容带当前房间人数。
+
+## 高优先级/低优先级消息分片调度
+
+- 所有消息分为高优先级（如管理员操作、系统事件、自定义事件）和低优先级（普通聊天等）。
+- 低优先级消息每处理一批后主动让步，优先响应高优先级消息，保证系统灵敏度。
 
 ## 开发
 

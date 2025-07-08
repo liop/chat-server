@@ -104,6 +104,7 @@ pub struct RoomStats {
 #[derive(Serialize, Clone, Debug)]
 pub struct RoomDetailsResponse {
     pub room_id: Uuid,
+    pub room_name: String,
     pub admin_user_ids: HashSet<String>,
     pub start_time: i64,
     #[serde(flatten)]

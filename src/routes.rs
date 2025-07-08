@@ -119,7 +119,13 @@ pub async fn list_rooms(
     for room_state in rooms_guard.values() {
         let (tx, rx) = tokio::sync::oneshot::channel();
         if room_state.stats_tx.send(StatsQuery { response_tx: tx }).await.is_ok() {
-            if let Ok(details) = rx.await {
+            if let Ok(mut details) = rx.await {
+                // 兼容：如果 room_name 为空则补充
+                if details.room_name.is_empty() {
+                    if let Ok(Some(info)) = db::get_room_basic_info(&state.db_pool, details.room_id).await {
+                        details.room_name = info.room_name;
+                    }
+                }
                 details_list.push(details);
             }
         }

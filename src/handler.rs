@@ -165,8 +165,14 @@ pub async fn room_message_loop(
                 }
             },
             Some(query) = stats_rx.recv() => {
+                // 查询房间名称
+                let room_name = match db::get_room_basic_info(&state.db_pool, room_id).await {
+                    Ok(Some(info)) => info.room_name,
+                    _ => "".to_string(),
+                };
                 let response = RoomDetailsResponse {
                     room_id,
+                    room_name,
                     admin_user_ids: admin_users.clone(),
                     start_time,
                     stats: stats.clone(),
